@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shashka O'yini</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1a1a2e; color: #fff; font-family: Arial, sans-serif; display: flex; flex-direction: column; align-items: center; min-height: 100vh; padding: 20px; }
+h1 { margin-bottom: 10px; font-size: 24px; }
+#status { margin: 10px 0; font-size: 16px; background: #16213e; padding: 10px 20px; border-radius: 10px; text-align: center; }
+#scores { display: flex; gap: 30px; margin: 10px 0; }
+.score { text-align: center; }
+.score-label { font-size: 12px; color: #aaa; }
+.score-val { font-size: 22px; font-weight: bold; }
+#board { display: grid; grid-template-columns: repeat(8, 1fr); border: 3px solid #444; border-radius: 4px; overflow: hidden; width: min(90vw, 480px); height: min(90vw, 480px); }
+.cell { display: flex; align-items: center; justify-content: center; cursor: pointer; position: relative; }
+.cell.light { background: #f0d9b5; }
+.cell.dark { background: #b58863; }
+.cell.possible { background: #7fc97f !important; }
+.cell.selected { outline: 4px solid #3b82f6; outline-offset: -4px; }
+.piece { width: 80%; height: 80%; border-radius: 50%; border: 3px solid rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; font-size: 20px; transition: transform 0.1s; cursor: pointer; }
+.piece:hover { transform: scale(1.05); }
+.piece.red { background: radial-gradient(circle at 35% 35%, #f87171, #b91c1c); }
+.piece.white { background: radial-gradient(circle at 35% 35%, #f9fafb, #9ca3af); }
+#waiting { font-size: 18px; text-align: center; margin-top: 40px; }
+.spinner { width: 40px; height: 40px; border: 4px solid #444; border-top-color: #fff; border-radius: 50%; animation: spin 1s linear infinite; margin: 20px auto; }
+@keyframes spin { to { transform: rotate(360deg); } }
+#gameover { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); align-items: center; justify-content: center; flex-direction: column; gap: 20px; }
+#gameover h2 { font-size: 32px; }
+#gameover button { padding: 12px 30px; font-size: 16px; border-radius: 10px; border: none; background: #3b82f6; color: #fff; cursor: pointer; }
+</style>
+</head>
+<body>
+<h1>♟ Shashka</h1>
+<div id="scores">
+  <div class="score"><div class="score-label">🔴 Qizil</div><div class="score-val" id="red-count">12</div></div>
+  <div class="score"><div class="score-label">⚪ Oq</div><div class="score-val" id="white-count">12</div></div>
+</div>
+<div id="status">Ulanmoqda...</div>
+<div id="board"></div>
+
+<div id="gameover">
+  <h2 id="gameover-text"></h2>
+  <button onclick="location.reload()">Qayta o'ynash</button>
+</div>
+
+<script>
+const GAME_ID = 'GAME_ID_PLACEHOLDER';
+const MY_COLOR = 'COLOR_PLACEHOLDER' || (location.search.includes('color=w') ? 'w' : 'r');
+
+const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+const wsUrl = `${proto}://${location.host}/ws/${GAME_ID}/${MY_COLOR}`;
+
+let ws, gameState = null, selected = null, possible = [];
+
+function connect() {
+  ws = new WebSocket(wsUrl);
+
+  ws.onopen = () => {
+    document.getElementById('status').textContent = 'Ulandi! Do\'stingiz kutilmoqda...';
+  };
+
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+
+    if (data.type === 'connected') {
+      if (!data.waiting) {
+        document.getElementById('status').textContent = 'O\'yin boshlandi!';
+      }
+    }
+
+    if (data.type === 'state') {
+      gameState = data;
+      renderBoard(data);
+      updateStatus(data);
+    }
+
+    if (data.type === 'gameover') {
+      const go = document.getElementById('gameover');
+      const txt = document.getElementById('gameover-text');
+      txt.textContent = data.winner === MY_COLOR ? '🎉 Siz yutdingiz!' : '😔 Siz yutqazdingiz!';
+      go.style.display = 'flex';
+    }
+  };
+
+  ws.onclose = () => {
+    document.getElementById('status').textContent = 'Ulanish uzildi. Sahifani yangilang.';
+  };
+}
+
+function updateStatus(state) {
+  document.getElementById('red-count').textContent = state.red_count;
+  document.getElementById('white-count').textContent = state.white_count;
+  const myTurn = state.turn === MY_COLOR;
+  const colorName = MY_COLOR === 'r' ? '🔴 Qizil' : '⚪ Oq';
+  document.getElementById('status').textContent = myTurn
+    ? `${colorName} — Sizning navbatingiz!`
+    : `${state.turn === 'r' ? '🔴' : '⚪'} — Raqib o'ylamoqda...`;
+}
+
+function renderBoard(state) {
+  const board = document.getElementById('board');
+  board.innerHTML = '';
+  const possibleSet = new Set((state.possible || []).map(m => `${m.r},${m.c}`));
+  const sel = state.selected;
+
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const cell = document.createElement('div');
+      cell.className = 'cell ' + ((r + c) % 2 === 0 ? 'light' : 'dark');
+
+      if (sel && sel[0] === r && sel[1] === c) cell.classList.add('selected');
+      if (possibleSet.has(`${r},${c}`)) cell.classList.add('possible');
+
+      const piece = state.board[r][c];
+      if (piece) {
+        const div = document.createElement('div');
+        div.className = 'piece ' + (piece.toLowerCase() === 'r' ? 'red' : 'white');
+        if (piece === piece.toUpperCase()) div.textContent = '♛';
+        cell.appendChild(div);
+      }
+
+      cell.onclick = () => cellClick(r, c);
+      board.appendChild(cell);
+    }
+  }
+}
+
+function cellClick(r, c) {
+  if (!gameState || gameState.turn !== MY_COLOR) return;
+  ws.send(JSON.stringify({ type: 'move', r, c }));
+}
+
+connect();
+</script>
+</body>
+</html>
